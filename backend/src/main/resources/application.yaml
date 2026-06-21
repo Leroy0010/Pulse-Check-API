@@ -12,7 +12,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: false
@@ -32,6 +32,7 @@ spring:
         max-size: 10
         queue-capacity: 100
       thread-name-prefix: MailSender-
+
 
 
 springdoc:
@@ -61,14 +62,7 @@ server:
       min-spare: 10
 
 app:
-  frontend:
-    base-url: ${FRONTEND_BASE_URL}
-    password-setup-url: ${FRONTEND_PASSWORD_SETUP_URL}
-    verify-email-url: ${FRONTEND_EMAIL_VERIFICATION_URL}
+  scheduler:
+    sweep-rate-ms: 5000
 
 
-# logging:
-  # level:
-    # org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer: ERROR
-    # org.springframework.messaging: TRACE
-   # org.springframework.web.socket : TRACE
