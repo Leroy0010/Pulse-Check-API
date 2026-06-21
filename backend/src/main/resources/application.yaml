@@ -24,7 +24,7 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.yaml
     enabled: true
   application:
-    name: ${APPLICATION_NAME:PULSECHECKAPI}
+    name: ${SPRING_APPLICATION_NAME:PULSECHECKAPI}
   task:
     execution:
       pool:

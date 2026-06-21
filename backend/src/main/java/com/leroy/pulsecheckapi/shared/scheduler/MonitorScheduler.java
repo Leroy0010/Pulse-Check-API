@@ -29,7 +29,7 @@ public class MonitorScheduler {
                 MonitorStatus.ACTIVE, now
         );
         for (Monitor monitor : missedHeartbeats) {
-            monitor.markUnreachable(now);
+            monitor.markUnreachable();
             monitorRepository.save(monitor);
             log.warn("{\"WARN\": \"Device {} missed heartbeat window. Entering grace period.\", \"time\": \"{}\"}",
                     monitor.getId(), now);

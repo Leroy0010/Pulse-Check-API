@@ -91,9 +91,18 @@ public class Monitor {
         this.graceExpiresAt = this.nextExpectedHeartbeat.plusSeconds(this.gracePeriod);
     }
 
-    public void markUnreachable(OffsetDateTime now) {
+    /**
+     * Shifts an unresponsive monitor into the warning grace period.
+     */
+    public void markUnreachable() {
+        if (this.status != MonitorStatus.ACTIVE) {
+            throw new IllegalStateException("Only ACTIVE monitors can become UNREACHABLE");
+        }
+
         this.status = MonitorStatus.UNREACHABLE;
-        // Keep nextExpectedHeartbeat null or untouched, but ensure grace tracker is alive
+        this.nextExpectedHeartbeat = null; // Clean up the expired active window
+
+        // graceExpiresAt remains fully intact for the secondary sweeper index
     }
 
     public void sweepToDown() {

@@ -1,135 +1,286 @@
 # Pulse-Check-API ("Watchdog" Sentinel)
-This challenge is designed to test your ability to bridge Computer Science fundamentals with Modern Backend Engineering.
 
-## 1. Business Context
-> **Client:** *CritMon Servers Inc.* (A Critical Infrastructure Monitoring Company).
+The **Pulse-Check-API** is a production-grade Dead Man's Switch service engineered for **CritMon Servers Inc.** It monitors remote infrastructure (such as unmanned weather stations and solar farms) operating over unstable, low-bandwidth networks. Instead of waiting for a human operator to discover an outage manually, this system continuously counts down configurable keep-alive windows and proactively signals critical outages the moment a hardware element stops transmitting heartbeats.
+
+---
+
+## 🗺️ System Architecture & State Machine
+
+The service is engineered around an explicit, domain-driven finite state machine (FSM). Rather than running volatile in-memory timers (`setTimeout`) that vanish during deployment rollouts or instance crashes, state transitions are driven by incoming REST telemetry and processed asynchronously by a high-throughput relational engine.
+
+```text
+       +-------------------------------------------------------+
+       |                                                       |
+       v                                                       |
+[ INITIAL ] ---> ( ACTIVE ) ----------------------------+      | POST /{id}/heartbeat
+                     |                                  |      | (Resets timeout/grace)
+                     | Scheduler Sweep                  |      |
+                     | (now > nextExpectedHeartbeat)    |      |
+                     v                                  |      |
+               ( UNREACHABLE )                          |      |
+                     |                                  |      |
+                     | Scheduler Sweep                  | POST |
+                     | (now > graceExpiresAt)           | /pause
+                     v                                  |      |
+                  ( DOWN ) ---> [ Throws Exception ] ---+      |
+                     |                 ^                       |
+                     |                 |                       |
+                     +-----------------+                       |
+                       Attempts to pause                       v
+                                                          ( PAUSED )
+
+```
+
+![Watchdog State Machine Flowchart](docs/architecture-flow.png)
+
+---
+
+## 🚀 The Developer's Choice: Intelligent Grace Period & Jitter Protection
 
 ### The Problem
-CritMon provides monitoring for remote solar farms and unmanned weather stations in areas with poor connectivity. These devices are supposed to send "I'm alive" signals every hour.
 
-Currently, CritMon has no way of knowing if a device has gone offline (due to power failure or theft) until a human manually checks the logs. They need a system that alerts *them* when a device *stops* talking.
+CritMon’s field assets are deployed in remote geographical zones characterized by fragile cellular connectivity and intermittent packet dropouts. In a naive system architecture, missing a single heartbeat by even a fraction of a second immediately triggers an outage event. This behavior leads to **alert fatigue**—flooding support channels with false alarms triggered by transient network routing jitter, forcing engineers to eventually ignore the alerting system entirely.
 
-### The Solution
-You need to build a **Dead Man’s Switch API**. Devices will register a "monitor" with a countdown timer (e.g., 60 seconds). If the device fails to "ping" (send a heartbeat) to the API before the timer runs out, the system automatically triggers an alert.
+### My Solution
 
----
+I implemented a two-tiered validation workflow natively within the core entity business domain utilizing an intermediate **`UNREACHABLE`** state paired with a customizable network `grace_period`.
 
-## 2. Technical Objective
-Build a backend service that manages stateful timers.
+1. **Phase 1 (Warning Transient):** If a device passes its primary `timeout` duration without a ping, its status shifts from `ACTIVE` to `UNREACHABLE`. The system issues a low-impact warning metric to log collectors, but suppresses high-priority notifications.
+2. **Phase 2 (Self-Healing Recovery):** If the remote hardware successfully re-establishes a connection and issues a heartbeat while inside this grace window, it seamlessly snaps back to `ACTIVE` status automatically.
+3. **Phase 3 (Critical Alerting):** Only when the `grace_expires_at` timestamp is completely bypassed does the system lock into a true **`DOWN`** state, triggering structured critical alarms for immediate dispatch teams.
 
-* **Registration:** Allow a client to create a monitor with a specific timeout duration.
-* **Heartbeat:** Reset the countdown when a ping is received.
-* **Trigger:** Fire a webhook (or log a critical error) if the countdown reaches zero.
+### Database Performance Optimization
 
+To handle thousands of distributed heartbeats safely without linear degradation, I introduced **Conditional Partial Indexes** inside the Liquibase migration framework:
 
----
+```sql
+CREATE INDEX IF NOT EXISTS idx_monitors_sweeper_active 
+ON monitors (status, next_expected_heartbeat) WHERE status = 'ACTIVE';
 
-## 3. Getting Started
+CREATE INDEX IF NOT EXISTS idx_monitors_sweeper_unreachable 
+ON monitors (status, grace_expires_at) WHERE status = 'UNREACHABLE';
 
-1.  **Fork this Repository:** Do not clone it directly. Create a fork to your own GitHub account.
-2.  **Environment:** You may use **Node.js, Python, Java or Go, etc.**.
-3.  **Submission:** Your final submission will be a link to your forked repository containing:
-    * The source code.
-    * The **Architecture Diagram**
-    * The `README.md` with documentation.
+```
+
+This guarantees that the asynchronous system sweeper runs index-only scans, filtering down exactly to the small subset of failing monitors rather than executing heavy table scans across thousands of healthy nodes.
 
 ---
 
-## 4. The Architecture Diagram 
-**Task:** Before you write any code, you must design the logic flow.
-**Deliverable:** A **Sequence Diagram** or **State Flowchart** embedded in your `README.md`.
+## 💻 Setup & Execution Instructions
+
+### Prerequisites
+
+* **Docker Desktop** or **Docker Engine** installed and running.
+* Git (to clone the repository).
+
+### Running the Application via Docker Compose
+
+The entire stack—including the application backend and its persistent database layer—is fully containerized using the local `Dockerfile.dev` and `docker-compose.yaml` infrastructure.
+
+1. **Clone the repository:**
+
+```bash
+git clone https://github.com/Leroy0010/Pulse-Check-API.git
+
+```
+
+```
+cd backend
+```
+
+2. **Configure Environment Variables:**
+
+Create a local `.env` file in the root directory of the project based on the provided configuration template:
+
+```bash
+cp .env.example .env
+
+```
+
+*Open the newly created `.env` file and adjust any database credentials, ports, or profile flags if necessary.*  
+3. **Build and launch the containers:**
+
+```bash
+docker compose up --build -d
+
+```
+
+4. **Verify Application Availability:**
+
+The server will compile, run database migrations automatically, and expose the HTTP API gateway on port `8080`.
+
+### Interactive API Exploration
+
+Once the containerized service initiates successfully, you can view, test, and step through all input parameters inside the automated interactive documentation panel:
+
+👉 **[Interactive Swagger UI Dashboard](https://www.google.com/search?q=http://localhost:8080/swagger-ui/index.html)**
 
 ---
 
-## 5. User Stories & Acceptance Criteria
+## 📋 API Documentation & Endpoint Reference
 
-### User Story 1: Registering a Monitor
-**As a** device administrator,  
-**I want to** create a new monitor for my device,  
-**So that** the system knows to track its status.
+### Global Constraints
 
-**Acceptance Criteria:**
-- [ ] The API accepts a `POST /monitors` request.
-- [ ] Input: `{"id": "device-123", "timeout": 60, "alert_email": "admin@critmon.com"}`.
-- [ ] The system starts a countdown timer for 60 seconds associated with `device-123`.
-- [ ] Response: `201 Created` with a confirmation message.
+* All inputs are validated at the controller boundary.
+* Missing, malformed, or out-of-bounds metrics automatically trigger typed JSON validation payloads.
+* All successful tracking operations return a standardized payload wrapper envelope (`ApiResponse<T>`).
 
-### User Story 2: The Heartbeat (Reset)
-**As a** remote device,  
-**I want to** send a signal to the server,  
-**So that** my timer is reset and no alert is sent.
+### Endpoint Matrix
 
-**Acceptance Criteria:**
-- [ ] The API accepts a `POST /monitors/{id}/heartbeat` request.
-- [ ] If the ID exists and the timer has NOT expired:
-    - [ ] Restart the countdown from the beginning (e.g., reset to 60 seconds).
-    - [ ] Return `200 OK`.
-- [ ] If the ID does not exist:
-    - [ ] Return `404 Not Found`.
-
-### User Story 3: The Alert (Failure State)
-**As a** support engineer,  
-**I want to** be notified immediately if a device stops sending heartbeats,  
-**So that** I can deploy a repair team.
-
-**Acceptance Criteria:**
-- [ ] If the timer for `device-123` reaches 0 seconds (no heartbeat received):
-    - [ ] The system must internally "fire" an alert.
-    - [ ] **Implementation:** For this project, simply `console.log` a JSON object: `{"ALERT": "Device device-123 is down!", "time": <timestamp>}`. (Or simulate sending an email).
-    - [ ] The monitor status changes to `down`.
+| Method | Endpoint | Description | Access Layer |
+| --- | --- | --- | --- |
+| **POST** | `/monitors` | Registers a new watchdog configuration | Administrator / Provisioning |
+| **POST** | `/monitors/{id}/heartbeat` | Submits a live ping to reset active windows | Remote IoT Device |
+| **POST** | `/monitors/{id}/pause` | Suspends all countdown tracking safely | Maintenance Technician |
+| **GET** | `/monitors/{id}` | Retrieves specific metadata & remaining window | Monitoring Dashboard |
+| **GET** | `/monitors` | Queries paginated entries with optional state filtering | Operator Panel |
+| **DELETE** | `/monitors/{id}` | Purges a configuration entry completely | System Administrator |
 
 ---
 
-## 6. Bonus User Story (The "Snooze" Button)
-**As a** maintenance technician,  
-**I want to** pause monitoring while I am repairing a device,  
-**So that** I don't trigger false alarms.
+### Core Endpoint Implementations & Payloads
 
-**Acceptance Criteria:**
-- [ ] Create a `POST /monitors/{id}/pause` endpoint.
-- [ ] When called, the timer stops completely. No alerts will fire.
-- [ ] Calling the heartbeat endpoint again automatically "un-pauses" the monitor and restarts the timer.
+#### 1. Register a Monitor
 
----
+Initializes a tracked switch entity. If `gracePeriod` is omitted from the request body, the backend applies a protective **15-second** system default automatically.
 
-## 7. The "Developer's Choice" Challenge
-We value engineers who look for "what's missing."
+* **URL:** `POST /monitors`
+* **Payload Example:**
 
-**Task:** Identify **one** additional feature that makes this system more robust or user-friendly.
-1.  **Implement it.**
-2.  **Document it:** Explain *why* you added it in your README.
+```json
+{
+  "id": "solar-farm-node-402",
+  "timeout": 60,
+  "gracePeriod": 20,
+  "alertEmail": "oncall-tier1@critmon.com"
+}
 
----
+```
 
-## 8. Documentation Requirements
-Your final `README.md` must replace these instructions. It must cover:
+* **Response Example (`201 Created`):**
 
-1.  **Architecture Diagram** 
-2.  **Setup Instructions** 
-3.  **API Documentation** 
-4.  **The Developer's Choice:** Explanation of your added feature.
+```json
+{
+  "timestamp": "2026-06-21T14:10:00.123",
+  "success": true,
+  "message": "Monitor registered and initialized successfully",
+  "data": {
+    "id": "solar-farm-node-402",
+    "expiresAt": "2026-06-21T14:11:00.000Z"
+  }
+}
 
----
-Submit your repo link via the [online](https://forms.office.com/e/rGKtfeZCsH) form.
+```
 
-## 🛑 Pre-Submission Checklist
-**WARNING:** Before you submit your solution, you **MUST** pass every item on this list.
-If you miss any of these critical steps, your submission will be **automatically rejected** and you will **NOT** be invited to an interview.
+#### 2. Device Heartbeat Ping
 
-### 1. 📂 Repository & Code
-- [ ] **Public Access:** Is your GitHub repository set to **Public**? (We cannot review private repos).
-- [ ] **Clean Code:** Did you remove unnecessary files (like `node_modules`, `.env` with real keys, or `.DS_Store`)?
-- [ ] **Run Check:** if we clone your repo and run `npm start` (or equivalent), does the server start immediately without crashing?
+Resets the countdown tracking metrics back to baseline. Can be processed dynamically even while a device is marked `UNREACHABLE` or `PAUSED`.
 
-### 2. 📄 Documentation (Crucial)
-- [ ] **Architecture Diagram:** Did you include a visual Diagram (Flowchart or Sequence Diagram) in the README?
-- [ ] **README Swap:** Did you **DELETE** the original instructions (the problem brief) from this file and replace it with your own documentation?
-- [ ] **API Docs:** Is there a clear list of Endpoints and Example Requests in the README?
+* **URL:** `POST /monitors/solar-farm-node-402/heartbeat`
+* **Response Example (`200 OK`):**
 
+```json
+{
+  "timestamp": "2026-06-21T14:10:45.456",
+  "success": true,
+  "message": "Heartbeat received successfully. Watchdog window reset.",
+  "data": {
+    "id": "solar-farm-node-402",
+    "status": "ACTIVE",
+    "expiresAt": "2026-06-21T14:11:45.456Z",
+    "remainingSeconds": 60
+  }
+}
 
-### 3. 🧹 Git Hygiene
-- [ ] **Commit History:** Does your repo have multiple commits with meaningful messages? (A single "Initial Commit" is a red flag).
+```
 
----
-**Ready?**
-If you checked all the boxes above, submit your repository link in the application form. Good luck! 🚀
+#### 3. Pause Monitor (Snooze Functionality)
+
+Allows engineers to halt monitoring triggers during active physical component maintenance cycles.
+
+* **URL:** `POST /monitors/solar-farm-node-402/pause`
+* **Response Example (`200 OK`):**
+
+```json
+{
+  "timestamp": "2026-06-21T14:12:00.789",
+  "success": true,
+  "message": "Watchdog tracking paused. Countdown suspended.",
+  "data": {
+    "id": "solar-farm-node-402",
+    "status": "PAUSED"
+  }
+}
+
+```
+
+> 🛑 **Operational Safeguard:** Executing a pause request against a monitor that has already fully shifted to a `DOWN` state will result in a validation failure (`400 Bad Request`), preventing personnel from covering up existing system outages post-facto.
+
+#### 4. Query All Tracked Monitors
+
+Fetches a fully paginated, sorted grid of active system configurations with optional query filters.
+
+* **URL:** `GET /monitors?status=UNREACHABLE&page=0&size=10`
+* **Response Example (`200 OK`):**
+
+```json
+{
+  "timestamp": "2026-06-21T14:15:00.000",
+  "success": true,
+  "message": "Monitors fetched successfully.",
+  "data": {
+    "content": [
+      {
+        "id": "weather-station-09",
+        "timeout": 30,
+        "alertEmail": "admin-weather@critmon.com",
+        "status": "UNREACHABLE",
+        "expiresAt": "2026-06-21T14:15:20.000Z",
+        "remainingSeconds": 20
+      }
+    ],
+    "pageable": {
+      "pageNumber": 0,
+      "pageSize": 10
+    },
+    "totalPages": 1,
+    "totalElements": 1
+  }
+}
+
+```
+
+## 🛡️ Unified Error Handling Architecture
+
+The API exposes a highly predictable, standardized exception handling pipeline. Every client-side or server-side error emits an `ApiError` payload wrapped with fine-grained contextual details.
+
+### Standardized Error Format
+
+```json
+{
+  "timestamp": "2026-06-21T14:20:00.101",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Validation failed.",
+  "details": {
+    "timeout": [
+      "Timeout must be at least 5 seconds"
+    ],
+    "alertEmail": [
+      "Invalid email format"
+    ]
+  },
+  "code": "VALIDATION_FAILED"
+}
+
+```
+
+### Enumerated System Error Codes
+
+| Error Code | HTTP Counterpart | Architectural Context Trigger |
+| --- | --- | --- |
+| `RESOURCE_NOT_FOUND` | `404 Not Found` | Attempted target heartbeat or pause on an unmapped key. |
+| `MONITOR_ALREADY_EXISTS` | `409 Conflict` | Attempted registration using an active device identification string. |
+| `VALIDATION_FAILED` | `400 Bad Request` | Constraint annotations violated on inbound model attributes. |
+| `INVALID_STATE_TRANSITION` | `400 Bad Request` | Trying to transition an immutable state (e.g., pausing a `DOWN` unit). |
+| `INTERNAL_SERVER_ERROR` | `500 Server Error` | Unexpected global exceptions safely caught at the boundary. |
