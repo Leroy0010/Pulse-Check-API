@@ -33,8 +33,7 @@ public class MonitorScheduler {
                     monitor.getId(), now, monitor.getAlertEmail());
 
             // Atomically switch state down to isolate from successive checks
-            monitor.setStatus(MonitorStatus.DOWN);
-            monitor.setNextExpectedHeartbeat(null);
+            monitor.sweep();
             monitorRepository.save(monitor);
         }
     }

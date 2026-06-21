@@ -32,12 +32,14 @@ public class MonitorService {
         }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        Monitor monitor = new Monitor();
-        monitor.setId(request.getId());
-        monitor.setTimeout(request.getTimeout());
-        monitor.setAlertEmail(request.getAlertEmail());
-        monitor.setStatus(MonitorStatus.ACTIVE);
-        monitor.setNextExpectedHeartbeat(now.plusSeconds(request.getTimeout()));
+
+        // Use the Domain Entity constructor to ensure safe initialization
+        Monitor monitor = new Monitor(
+                request.getId(),
+                request.getTimeout(),
+                request.getAlertEmail(),
+                now
+        );
 
         Monitor saved = monitorRepository.save(monitor);
         return mapToResponse(saved, now);
@@ -45,14 +47,11 @@ public class MonitorService {
 
     @Transactional
     public MonitorResponse processHeartbeat(String id) {
-        Monitor monitor = monitorRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
-
+        Monitor monitor = getMonitorOrThrow(id);
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
-        // Reset and dynamically unpause or restore any monitor hitting the heartbeat endpoint
-        monitor.setStatus(MonitorStatus.ACTIVE);
-        monitor.setNextExpectedHeartbeat(now.plusSeconds(monitor.getTimeout()));
+        // Delegate to domain model
+        monitor.processHeartbeat(now);
 
         Monitor updated = monitorRepository.save(monitor);
         return mapToResponse(updated, now);
@@ -60,15 +59,13 @@ public class MonitorService {
 
     @Transactional
     public MonitorResponse pauseMonitor(String id) {
-        Monitor monitor = monitorRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
+        Monitor monitor = getMonitorOrThrow(id);
 
-        if (monitor.getStatus() == MonitorStatus.DOWN) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot pause a monitor that is DOWN");
+        try {
+            monitor.pause(); // Delegate to domain model
+        } catch (IllegalStateException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         }
-
-        monitor.setStatus(MonitorStatus.PAUSED);
-        monitor.setNextExpectedHeartbeat(null); // Clear the active deadline context
 
         Monitor updated = monitorRepository.save(monitor);
         return mapToResponse(updated, OffsetDateTime.now(ZoneOffset.UTC));
@@ -76,55 +73,42 @@ public class MonitorService {
 
     @Transactional
     public MonitorResponse initiateRecovery(String id) {
-        Monitor monitor = monitorRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
+        Monitor monitor = getMonitorOrThrow(id);
 
-        if (monitor.getStatus() != MonitorStatus.DOWN) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Monitor must be DOWN to enter recovery status");
+        try {
+            monitor.initiateRecovery(); // Delegate to domain model
+        } catch (IllegalStateException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         }
 
-        monitor.setStatus(MonitorStatus.UNDER_RECOVERY);
-        monitor.setNextExpectedHeartbeat(null);
-
         Monitor updated = monitorRepository.save(monitor);
-
         var now = OffsetDateTime.now(ZoneOffset.UTC);
 
-        log.info(
-                "{{\"RECOVERY_START\": \"Monitor {} is under technician repair\", \"time\": \"{}\"}}",
-                id, now
-        );
+        log.info("{{\"RECOVERY_START\": \"Monitor {} is under technician repair\", \"time\": \"{}\"}}", id, now);
 
         return mapToResponse(updated, now);
     }
 
     @Transactional
     public MonitorResponse completeRecovery(String id) {
-        Monitor monitor = monitorRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
-
-        if (monitor.getStatus() != MonitorStatus.UNDER_RECOVERY) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Monitor is not currently marked UNDER_RECOVERY");
-        }
-
+        Monitor monitor = getMonitorOrThrow(id);
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        monitor.setStatus(MonitorStatus.ACTIVE);
-        monitor.setNextExpectedHeartbeat(now.plusSeconds(monitor.getTimeout()));
+
+        try {
+            monitor.completeRecovery(now); // Delegate to domain model
+        } catch (IllegalStateException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
 
         Monitor updated = monitorRepository.save(monitor);
 
-        log.info(
-                "{{\"RECOVERY_COMPLETE\": \"Monitor {} is back online\", \"time\": \"{}\"}}",
-                id, now
-        );
+        log.info("{{\"RECOVERY_COMPLETE\": \"Monitor {} is back online\", \"time\": \"{}\"}}", id, now);
         return mapToResponse(updated, now);
     }
 
     @Transactional(readOnly = true)
     public MonitorResponse getMonitorById(String id) {
-        Monitor monitor = monitorRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
-        return mapToResponse(monitor, OffsetDateTime.now(ZoneOffset.UTC));
+        return mapToResponse(getMonitorOrThrow(id), OffsetDateTime.now(ZoneOffset.UTC));
     }
 
     @Transactional(readOnly = true)
@@ -141,6 +125,13 @@ public class MonitorService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found");
         }
         monitorRepository.deleteById(id);
+    }
+
+    // --- Helper Methods ---
+
+    private Monitor getMonitorOrThrow(String id) {
+        return monitorRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
     }
 
     private MonitorResponse mapToResponse(Monitor monitor, OffsetDateTime referenceTime) {
