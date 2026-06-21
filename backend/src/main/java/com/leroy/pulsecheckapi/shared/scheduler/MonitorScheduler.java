@@ -23,17 +23,27 @@ public class MonitorScheduler {
     @Transactional
     public void sweepExpiredMonitors() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        List<Monitor> deadMonitors = monitorRepository.findByStatusAndNextExpectedHeartbeatBefore(
+
+        // 1. Handle ACTIVE devices that missed their initial heartbeat window
+        List<Monitor> missedHeartbeats = monitorRepository.findByStatusAndNextExpectedHeartbeatBefore(
                 MonitorStatus.ACTIVE, now
         );
+        for (Monitor monitor : missedHeartbeats) {
+            monitor.markUnreachable(now);
+            monitorRepository.save(monitor);
+            log.warn("{\"WARN\": \"Device {} missed heartbeat window. Entering grace period.\", \"time\": \"{}\"}",
+                    monitor.getId(), now);
+        }
 
+        // 2. Handle UNREACHABLE devices that also exhausted their grace period
+        List<Monitor> deadMonitors = monitorRepository.findByStatusAndGraceExpiresAtBefore(
+                MonitorStatus.UNREACHABLE, now
+        );
         for (Monitor monitor : deadMonitors) {
-            // Emitting standardized structured log output for alerting infrastructure
-            log.error("{\"ALERT\": \"Device {} is down!\", \"time\": \"{}\", \"email\": \"{}\"}",
+            log.error("{\"ALERT\": \"Device {} is officially DOWN! Grace period exhausted.\", \"time\": \"{}\", \"email\": \"{}\"}",
                     monitor.getId(), now, monitor.getAlertEmail());
 
-            // Atomically switch state down to isolate from successive checks
-            monitor.sweep();
+            monitor.sweepToDown();
             monitorRepository.save(monitor);
         }
     }

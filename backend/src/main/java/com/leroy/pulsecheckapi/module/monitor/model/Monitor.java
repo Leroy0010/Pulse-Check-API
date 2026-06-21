@@ -31,6 +31,12 @@ public class Monitor {
     @Column(name = "next_expected_heartbeat")
     private OffsetDateTime nextExpectedHeartbeat;
 
+    @Column(name = "grace_period", nullable = false)
+    private Short gracePeriod; // e.g., 15 seconds
+
+    @Column(name = "grace_expires_at")
+    private OffsetDateTime graceExpiresAt;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -44,7 +50,7 @@ public class Monitor {
     /**
      * Initializes a new Monitor safely.
      */
-    public Monitor(String id, Short timeout, String alertEmail, OffsetDateTime now) {
+    public Monitor(String id, Short timeout, Short gracePeriod, String alertEmail, OffsetDateTime now) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("Monitor ID cannot be empty");
         }
@@ -54,20 +60,16 @@ public class Monitor {
         if (alertEmail == null || !alertEmail.contains("@")) {
             throw new IllegalArgumentException("A valid alert email is required");
         }
+
         this.id = id;
         this.timeout = timeout;
+        this.gracePeriod = gracePeriod;
         this.alertEmail = alertEmail;
         this.status = MonitorStatus.ACTIVE;
         this.nextExpectedHeartbeat = now.plusSeconds(timeout);
+        this.graceExpiresAt = this.nextExpectedHeartbeat.plusSeconds(gracePeriod);
     }
 
-    /**
-     * Processes a heartbeat, resetting the countdown window.
-     */
-    public void processHeartbeat(OffsetDateTime now) {
-        this.status = MonitorStatus.ACTIVE;
-        this.nextExpectedHeartbeat = now.plusSeconds(this.timeout);
-    }
 
     /**
      * Pauses the monitor, clearing the countdown.
@@ -81,30 +83,22 @@ public class Monitor {
     }
 
     /**
-     * Moves a DOWN monitor into the recovery state.
+     * Processes a heartbeat, resetting the countdown window.
      */
-    public void initiateRecovery() {
-        if (this.status != MonitorStatus.DOWN) {
-            throw new IllegalStateException("Monitor must be DOWN to enter recovery status");
-        }
-        this.status = MonitorStatus.UNDER_RECOVERY;
-        this.nextExpectedHeartbeat = null;
-    }
-
-    /**
-     * Brings a recovering monitor back online.
-     */
-    public void completeRecovery(OffsetDateTime now) {
-        if (this.status != MonitorStatus.UNDER_RECOVERY) {
-            throw new IllegalStateException("Monitor is not currently marked UNDER_RECOVERY");
-        }
+    public void processHeartbeat(OffsetDateTime now) {
         this.status = MonitorStatus.ACTIVE;
         this.nextExpectedHeartbeat = now.plusSeconds(this.timeout);
+        this.graceExpiresAt = this.nextExpectedHeartbeat.plusSeconds(this.gracePeriod);
     }
 
-    public void sweep(){
+    public void markUnreachable(OffsetDateTime now) {
+        this.status = MonitorStatus.UNREACHABLE;
+        // Keep nextExpectedHeartbeat null or untouched, but ensure grace tracker is alive
+    }
+
+    public void sweepToDown() {
         this.status = MonitorStatus.DOWN;
         this.nextExpectedHeartbeat = null;
-
+        this.graceExpiresAt = null;
     }
 }

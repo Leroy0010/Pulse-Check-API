@@ -4,5 +4,5 @@ public enum MonitorStatus {
     ACTIVE,
     PAUSED,
     DOWN,
-    UNDER_RECOVERY
+    UNREACHABLE,
 }

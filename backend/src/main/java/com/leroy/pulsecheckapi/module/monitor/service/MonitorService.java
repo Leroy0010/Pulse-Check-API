@@ -2,21 +2,21 @@ package com.leroy.pulsecheckapi.module.monitor.service;
 
 import com.leroy.pulsecheckapi.module.monitor.dto.MonitorResponse;
 import com.leroy.pulsecheckapi.module.monitor.dto.RegisterMonitorRequest;
+import com.leroy.pulsecheckapi.module.monitor.exception.MonitorAlreadyExistsException;
+import com.leroy.pulsecheckapi.module.monitor.exception.MonitorNotFoundException;
 import com.leroy.pulsecheckapi.module.monitor.model.Monitor;
 import com.leroy.pulsecheckapi.module.monitor.model.MonitorStatus;
 import com.leroy.pulsecheckapi.module.monitor.repository.MonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -28,15 +28,17 @@ public class MonitorService {
     @Transactional
     public MonitorResponse createMonitor(RegisterMonitorRequest request) {
         if (monitorRepository.existsById(request.getId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Monitor ID already exists");
+            throw new MonitorAlreadyExistsException(request.getId());
         }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
-        // Use the Domain Entity constructor to ensure safe initialization
+        var gracePeriod = request.getGracePeriod() != null ? request.getGracePeriod() : 15;
+
         Monitor monitor = new Monitor(
                 request.getId(),
                 request.getTimeout(),
+                gracePeriod,
                 request.getAlertEmail(),
                 now
         );
@@ -50,9 +52,7 @@ public class MonitorService {
         Monitor monitor = getMonitorOrThrow(id);
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
-        // Delegate to domain model
         monitor.processHeartbeat(now);
-
         Monitor updated = monitorRepository.save(monitor);
         return mapToResponse(updated, now);
     }
@@ -61,49 +61,10 @@ public class MonitorService {
     public MonitorResponse pauseMonitor(String id) {
         Monitor monitor = getMonitorOrThrow(id);
 
-        try {
-            monitor.pause(); // Delegate to domain model
-        } catch (IllegalStateException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
-        }
+        monitor.pause();
 
         Monitor updated = monitorRepository.save(monitor);
         return mapToResponse(updated, OffsetDateTime.now(ZoneOffset.UTC));
-    }
-
-    @Transactional
-    public MonitorResponse initiateRecovery(String id) {
-        Monitor monitor = getMonitorOrThrow(id);
-
-        try {
-            monitor.initiateRecovery(); // Delegate to domain model
-        } catch (IllegalStateException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
-        }
-
-        Monitor updated = monitorRepository.save(monitor);
-        var now = OffsetDateTime.now(ZoneOffset.UTC);
-
-        log.info("{{\"RECOVERY_START\": \"Monitor {} is under technician repair\", \"time\": \"{}\"}}", id, now);
-
-        return mapToResponse(updated, now);
-    }
-
-    @Transactional
-    public MonitorResponse completeRecovery(String id) {
-        Monitor monitor = getMonitorOrThrow(id);
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-
-        try {
-            monitor.completeRecovery(now); // Delegate to domain model
-        } catch (IllegalStateException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
-        }
-
-        Monitor updated = monitorRepository.save(monitor);
-
-        log.info("{{\"RECOVERY_COMPLETE\": \"Monitor {} is back online\", \"time\": \"{}\"}}", id, now);
-        return mapToResponse(updated, now);
     }
 
     @Transactional(readOnly = true)
@@ -112,17 +73,16 @@ public class MonitorService {
     }
 
     @Transactional(readOnly = true)
-    public List<MonitorResponse> getAllMonitors() {
+    public Page<MonitorResponse> getAllMonitors(MonitorStatus status, Pageable pageable) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        return monitorRepository.findAll().stream()
-                .map(monitor -> mapToResponse(monitor, now))
-                .collect(Collectors.toList());
+        return monitorRepository.findAllAndStatus(status, pageable)
+                .map(monitor -> mapToResponse(monitor, now));
     }
 
     @Transactional
     public void deleteMonitor(String id) {
         if (!monitorRepository.existsById(id)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found");
+            throw new MonitorNotFoundException(id);
         }
         monitorRepository.deleteById(id);
     }
@@ -131,13 +91,18 @@ public class MonitorService {
 
     private Monitor getMonitorOrThrow(String id) {
         return monitorRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Monitor not found"));
+                .orElseThrow(() -> new MonitorNotFoundException(id));
     }
 
     private MonitorResponse mapToResponse(Monitor monitor, OffsetDateTime referenceTime) {
         Long remaining = null;
+
         if (monitor.getStatus() == MonitorStatus.ACTIVE && monitor.getNextExpectedHeartbeat() != null) {
             remaining = Duration.between(referenceTime, monitor.getNextExpectedHeartbeat()).toSeconds();
+            if (remaining < 0) remaining = 0L;
+        } else if (monitor.getStatus() == MonitorStatus.UNREACHABLE && monitor.getGraceExpiresAt() != null) {
+            // Provide real-time countdown for the grace period remaining
+            remaining = Duration.between(referenceTime, monitor.getGraceExpiresAt()).toSeconds();
             if (remaining < 0) remaining = 0L;
         }
 
@@ -146,7 +111,7 @@ public class MonitorService {
                 .timeout(monitor.getTimeout())
                 .alertEmail(monitor.getAlertEmail())
                 .status(monitor.getStatus())
-                .expiresAt(monitor.getNextExpectedHeartbeat())
+                .expiresAt(monitor.getStatus() == MonitorStatus.UNREACHABLE ? monitor.getGraceExpiresAt() : monitor.getNextExpectedHeartbeat())
                 .remainingSeconds(remaining)
                 .build();
     }
