@@ -33,12 +33,10 @@ public class MonitorService {
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
-        var gracePeriod = request.getGracePeriod() != null ? request.getGracePeriod() : 15;
-
         Monitor monitor = new Monitor(
                 request.getId(),
                 request.getTimeout(),
-                gracePeriod,
+                request.getGracePeriod(),
                 request.getAlertEmail(),
                 now
         );

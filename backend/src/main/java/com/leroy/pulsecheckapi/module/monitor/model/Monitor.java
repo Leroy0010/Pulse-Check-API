@@ -63,11 +63,13 @@ public class Monitor {
 
         this.id = id;
         this.timeout = timeout;
-        this.gracePeriod = gracePeriod;
+
+        this.gracePeriod = (gracePeriod != null) ? gracePeriod :  15;
+
         this.alertEmail = alertEmail;
         this.status = MonitorStatus.ACTIVE;
         this.nextExpectedHeartbeat = now.plusSeconds(timeout);
-        this.graceExpiresAt = this.nextExpectedHeartbeat.plusSeconds(gracePeriod);
+        this.graceExpiresAt = this.nextExpectedHeartbeat.plusSeconds(this.gracePeriod);
     }
 
 
