@@ -90,7 +90,7 @@ The server will compile, run database migrations automatically, and expose the H
 
 Once the containerized service initiates successfully, you can view, test, and step through all input parameters inside the automated interactive documentation panel:
 
-👉 **[Interactive Swagger UI Dashboard](https://www.google.com/search?q=http://localhost:8080/swagger-ui/index.html)**
+👉 **[Interactive Swagger UI Dashboard](http://localhost:8080/swagger-ui/index.html)**
 
 ---
 
