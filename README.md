@@ -45,46 +45,58 @@ This guarantees that the asynchronous system sweeper runs index-only scans, filt
 
 ## 💻 Setup & Execution Instructions
 
-### Prerequisites
+### 📋 Prerequisites
 
-- **Docker Desktop** or **Docker Engine** installed and running.
-- Git (to clone the repository).
+Before running this project, you must ensure that Docker is running and your network port is available:
 
-### Running the Application via Docker Compose
+* **Docker Status:** Make sure your Docker daemon is fully active.
+  * **Mac/Windows:** Open the **Docker Desktop** application and wait for the green status light.
+  * **Linux:** Ensure the service is started by running `sudo systemctl start docker`.
+* **Port Availability:** Verify that port **8080** is free and not being used by another application.
 
-The entire stack—including the application backend and its persistent database layer—is fully containerized using the local `Dockerfile.dev` and `docker-compose.yaml` infrastructure.
+---
+
+### 🚀 Running the Application via Docker Compose
+
+The entire stack—including the application backend and its persistent database layer—is fully containerized. Follow these steps to deploy the application:
 
 1. **Clone the repository:**
 
-```bash
-git clone https://github.com/Leroy0010/Pulse-Check-API.git
+   ```bash
+   git clone https://github.com/Leroy0010/Pulse-Check-API.git
+   ```
 
-```
+2. **Navigate into the project root directory:**
 
-```
-cd backend
-```
+    ```bash
+    cd Pulse-Check-API
+    ```
 
-2. **Configure Environment Variables:**
+3. **Navigate into the backend module folder:**
 
-Create a local `.env` file in the root directory of the project based on the provided configuration template:
+    ```bash
+    cd backend
+    ```
 
-```bash
-cp .env.example .env
+4. **Configure your local Environment Variables:**
 
-```
+    Create a local `.env` file from the provided configuration template:
 
-_Open the newly created `.env` file and adjust any database credentials, ports, or profile flags if necessary._  
-3. **Build and launch the containers:**
+   ```bash
+   cp .env.example .env
+   ```
 
-```bash
-docker compose up --build -d
+   *Open the newly created `.env` file to adjust any database credentials, ports, or profile flags if necessary.*
 
-```
+5. **Build and launch the containers:**
 
-4. **Verify Application Availability:**
+   ```bash
+   docker compose up --build -d
+   ```
 
-The server will compile, run database migrations automatically, and expose the HTTP API gateway on port `8080`.
+6. **Verify Application Availability:**
+
+   The server will compile, run database migrations automatically, and expose the HTTP API gateway on port `8080`.
 
 ### Interactive API Exploration
 
@@ -98,9 +110,9 @@ Once the containerized service initiates successfully, you can view, test, and s
 
 ### Global Constraints
 
-- All inputs are validated at the controller boundary.
-- Missing, malformed, or out-of-bounds metrics automatically trigger typed JSON validation payloads.
-- All successful tracking operations return a standardized payload wrapper envelope (`ApiResponse<T>`).
+* All inputs are validated at the controller boundary.
+* Missing, malformed, or out-of-bounds metrics automatically trigger typed JSON validation payloads.
+* All successful tracking operations return a standardized payload wrapper envelope (`ApiResponse<T>`).
 
 ### Endpoint Matrix
 
@@ -121,8 +133,8 @@ Once the containerized service initiates successfully, you can view, test, and s
 
 Initializes a tracked switch entity. If `gracePeriod` is omitted from the request body, the backend applies a protective **15-second** system default automatically.
 
-- **URL:** `POST /monitors`
-- **Payload Example:**
+* **URL:** `POST /monitors`
+* **Payload Example:**
 
 ```json
 {
@@ -133,7 +145,7 @@ Initializes a tracked switch entity. If `gracePeriod` is omitted from the reques
 }
 ```
 
-- **Response Example (`201 Created`):**
+* **Response Example (`201 Created`):**
 
 ```json
 {
@@ -151,8 +163,8 @@ Initializes a tracked switch entity. If `gracePeriod` is omitted from the reques
 
 Resets the countdown tracking metrics back to baseline. Can be processed dynamically even while a device is marked `UNREACHABLE` or `PAUSED`.
 
-- **URL:** `POST /monitors/solar-farm-node-402/heartbeat`
-- **Response Example (`200 OK`):**
+* **URL:** `POST /monitors/solar*farm-node-402/heartbeat`
+* **Response Example (`200 OK`):**
 
 ```json
 {
@@ -172,8 +184,8 @@ Resets the countdown tracking metrics back to baseline. Can be processed dynamic
 
 Allows engineers to halt monitoring triggers during active physical component maintenance cycles.
 
-- **URL:** `POST /monitors/solar-farm-node-402/pause`
-- **Response Example (`200 OK`):**
+* **URL:** `POST /monitors/solar-farm-node-402/pause`
+* **Response Example (`200 OK`):**
 
 ```json
 {
@@ -193,8 +205,8 @@ Allows engineers to halt monitoring triggers during active physical component ma
 
 Fetches a fully paginated, sorted grid of active system configurations with optional query filters.
 
-- **URL:** `GET /monitors?status=UNREACHABLE&page=0&size=10`
-- **Response Example (`200 OK`):**
+* **URL:** `GET /monitors?status=UNREACHABLE&page=0&size=10`
+* **Response Example (`200 OK`):**
 
 ```json
 {
